@@ -1,4 +1,5 @@
 from io import BytesIO
+from datetime import datetime
 import html
 import os
 import re
@@ -598,6 +599,13 @@ def truncate_text(text, max_chars=190):
     return cut + "..."
 
 
+def parse_float(value):
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
 def format_contact_display(name="", title="", email="", position=""):
     name = normalize_text(name)
     title = normalize_text(title) or normalize_text(position)
@@ -634,6 +642,10 @@ def badge_html(tag):
 
 def chip_html(item):
     return f'<span class="chip">{safe_html(item)}</span>'
+
+
+def export_timestamp():
+    return datetime.now().strftime("%B %d, %Y %I:%M %p")
 
 
 # ============================================================
@@ -1080,6 +1092,104 @@ def build_compact_summary(card):
 
 
 # ============================================================
+# PHASE 2: DISTRICT INTELLIGENCE + SCORING TRANSPARENCY
+# ============================================================
+
+def build_scoring_snapshot(card):
+    return {
+        "Tier": card.get("tier", ""),
+        "Overall Score": card.get("score", ""),
+        "Strategic Score": card.get("strategic_score", ""),
+        "Priority": card.get("priority", ""),
+        "Relationship Signal": "Yes" if "Existing Relationship" in card.get("tags", []) else "No",
+    }
+
+
+def build_score_explanation(card):
+    tags = card.get("tags", [])
+    explanations = []
+
+    overall_num = parse_float(card.get("score"))
+    strategic_num = parse_float(card.get("strategic_score"))
+
+    if card.get("tier") == "Tier 1":
+        explanations.append("Tier 1 placement signals strong overall fit and near-term prioritization.")
+    elif card.get("tier") == "Tier 2":
+        explanations.append("Tier 2 placement indicates a strong opportunity with meaningful strategic alignment.")
+    elif card.get("tier"):
+        explanations.append(f"{card.get('tier')} placement indicates the district is worth monitoring or pursuing selectively.")
+
+    if overall_num is not None:
+        if overall_num >= 4.5:
+            explanations.append("Very strong overall weighted score suggests unusually strong fit across multiple factors.")
+        elif overall_num >= 4.0:
+            explanations.append("Strong overall weighted score suggests the district is above average on strategic attractiveness.")
+        elif overall_num >= 3.5:
+            explanations.append("Moderate-to-strong overall weighted score suggests selective but real opportunity.")
+
+    if strategic_num is not None and strategic_num >= 4.0:
+        explanations.append("Strategic score is especially strong, indicating substantive district priorities align to current positioning.")
+    elif strategic_num is not None and strategic_num >= 3.5:
+        explanations.append("Strategic score is solid, suggesting there is enough signal to justify a guided conversation.")
+
+    if "Math" in tags:
+        explanations.append("Math priority signal contributes meaningfully to relevance and urgency.")
+    if "MTSS" in tags:
+        explanations.append("MTSS/intervention signal increases district need for implementation support and consistency.")
+    if "SPED/ELL" in tags:
+        explanations.append("SPED/ELL signal indicates subgroup pressure and differentiated access needs.")
+    if "CCMR" in tags:
+        explanations.append("CCMR signal strengthens relevance when readiness and pathways are district priorities.")
+    if "Curriculum / HQIM" in tags:
+        explanations.append("Curriculum/HQIM signal indicates implementation support may be more compelling than a net-new program pitch.")
+    if "Teacher Capacity" in tags:
+        explanations.append("Teacher capacity signal suggests coaching, routines, and usability matter for adoption.")
+
+    if "Existing Relationship" in tags:
+        explanations.append("Existing relationship context improves trust and shortens the path to a follow-up conversation.")
+
+    unique = []
+    for item in explanations:
+        if item not in unique:
+            unique.append(item)
+
+    return unique[:5]
+
+
+def build_next_moves(card):
+    tags = card.get("tags", [])
+    next_moves = []
+
+    if "Math" in tags and "MTSS" in tags:
+        next_moves.append("Lead with how math goals and intervention routines are being implemented across campuses.")
+        next_moves.append("Look for a pilot entry point tied to progress monitoring or campus variation.")
+    elif "Math" in tags:
+        next_moves.append("Anchor the conversation in current math goals, student practice, and growth monitoring.")
+        next_moves.append("Explore whether a short pilot could produce a visible proof point.")
+    elif "MTSS" in tags:
+        next_moves.append("Start with the district’s intervention workflow and where implementation slows down.")
+        next_moves.append("Identify whether one campus, grade band, or student group could serve as a proof point.")
+
+    if "Curriculum / HQIM" in tags:
+        next_moves.append("Frame support around implementation fidelity and teacher usability within adopted materials.")
+
+    if "SPED/ELL" in tags:
+        next_moves.append("Test where subgroup access or differentiated implementation needs are creating friction.")
+
+    if "Existing Relationship" in tags:
+        next_moves.append("Build from existing relationship credibility and connect to current district priorities.")
+    else:
+        next_moves.append("Use discovery to validate urgency before positioning a larger district-wide motion.")
+
+    unique = []
+    for item in next_moves:
+        if item not in unique:
+            unique.append(item)
+
+    return unique[:3]
+
+
+# ============================================================
 # CARD BUILDING
 # ============================================================
 
@@ -1186,6 +1296,12 @@ def build_card(strategic_row, score_row, basic_lookup, contacts_lookup, leadersh
     card["lead"] = build_lead_with(card)
     card["questions"] = build_refined_questions(card)
     card["compact"] = build_compact_summary(card)
+
+    # Phase 2 additions
+    card["score_snapshot"] = build_scoring_snapshot(card)
+    card["score_explanation"] = build_score_explanation(card)
+    card["next_moves"] = build_next_moves(card)
+
     return card
 
 
@@ -1317,7 +1433,7 @@ def search_blob(card):
         card.get("priority", ""),
         card.get("lead", ""),
     ]
-    for field in ["tags", "signals", "alignment", "contacts", "questions", "listen", "avoid"]:
+    for field in ["tags", "signals", "alignment", "contacts", "questions", "listen", "avoid", "score_explanation", "next_moves"]:
         values.extend(card.get(field, []))
     return " ".join(map(str, values)).lower()
 
@@ -1379,6 +1495,19 @@ def render_quick_prep(card):
     """, unsafe_allow_html=True)
 
 
+def render_scoring_snapshot(card):
+    snapshot = card.get("score_snapshot", {})
+    if not snapshot:
+        return
+
+    st.markdown("**Scoring Snapshot**")
+    st.markdown(f"- Tier: {snapshot.get('Tier', '')}")
+    st.markdown(f"- Overall Score: {snapshot.get('Overall Score', '')}")
+    st.markdown(f"- Strategic Score: {snapshot.get('Strategic Score', '')}")
+    st.markdown(f"- Priority: {snapshot.get('Priority', '')}")
+    st.markdown(f"- Relationship Signal: {snapshot.get('Relationship Signal', '')}")
+
+
 def render_card(card, view_mode="Quick Brief"):
     priority_class = card.get("priority", "Medium").lower().replace(" ", "-")
     badges = "".join(badge_html(tag) for tag in card.get("tags", []))
@@ -1408,6 +1537,15 @@ def render_card(card, view_mode="Quick Brief"):
     for item in compact.get("positioning", [])[:3]:
         st.markdown(f"- {item}")
 
+    # Phase 2: scoring transparency
+    st.markdown("**Why This District Scored This Way**")
+    for item in card.get("score_explanation", [])[:4]:
+        st.markdown(f"- {item}")
+
+    st.markdown("**Recommended Next Moves**")
+    for item in card.get("next_moves", [])[:2]:
+        st.markdown(f"- {item}")
+
     st.markdown("**Discovery Questions**")
     for item in card.get("questions", [])[:4]:
         st.markdown(f"- {item}")
@@ -1427,6 +1565,12 @@ def render_card(card, view_mode="Quick Brief"):
 
     if view_mode == "Full Detail":
         with st.expander("Deeper Planning Detail", expanded=False):
+            render_scoring_snapshot(card)
+
+            st.markdown("**Full Scoring Explanation**")
+            for item in card.get("score_explanation", []):
+                st.markdown(f"- {item}")
+
             st.markdown("**Strategic Signals**")
             for item in card.get("signals", []):
                 st.markdown(f"- {item}")
@@ -1438,6 +1582,10 @@ def render_card(card, view_mode="Quick Brief"):
             st.markdown("**Full Listen For**")
             st.markdown("".join(chip_html(item) for item in card.get("listen", [])), unsafe_allow_html=True)
 
+            st.markdown("**All Recommended Next Moves**")
+            for item in card.get("next_moves", []):
+                st.markdown(f"- {item}")
+
             st.markdown("**Full Guidance**")
             for item in card.get("avoid", []):
                 st.markdown(f"- {item}")
@@ -1448,15 +1596,17 @@ def render_card(card, view_mode="Quick Brief"):
         f"Best entry point: {compact.get('entry', '')}\n"
         f"Likely barrier: {compact.get('barrier', '')}\n\n"
         f"Best opening question: {(card.get('questions') or [''])[0]}\n\n"
-        f"Listen for: {', '.join(card.get('listen', [])[:8])}"
+        f"Listen for: {', '.join(card.get('listen', [])[:8])}\n\n"
+        f"Why this district scored this way: {'; '.join(card.get('score_explanation', [])[:3])}\n\n"
+        f"Recommended next moves: {'; '.join(card.get('next_moves', [])[:2])}"
     )
 
     with st.expander("Copy Quick Prep", expanded=False):
-        st.text_area("Quick prep copy", quick_prep, height=150, key=f"quick_{card['name']}")
+        st.text_area("Quick prep copy", quick_prep, height=180, key=f"quick_{card['name']}")
 
     st.download_button(
         "Download this district brief",
-        data=build_docx([card]),
+        data=build_docx([card], data_source_label=data_source_label),
         file_name=f"{card['name'].replace(' ', '_')}_Brief.docx",
         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         key=f"download_{card['name']}",
@@ -1474,8 +1624,9 @@ def add_bullets(cell, items, limit=None):
         return
     cell.text = ""
     for item in use_items:
-        p = cell.add_paragraph(style=None)
-        p.text = f"• {item}"
+        if normalize_text(item):
+            p = cell.add_paragraph(style=None)
+            p.text = f"• {item}"
 
 
 def shade_cell(cell, fill):
@@ -1485,7 +1636,7 @@ def shade_cell(cell, fill):
     tc_pr.append(shd)
 
 
-def build_docx(cards):
+def build_docx(cards, data_source_label="Built-in workbook"):
     doc = Document()
     title = doc.add_heading("Strategic District Field Guide", 0)
     for run in title.runs:
@@ -1494,8 +1645,10 @@ def build_docx(cards):
     doc.add_paragraph(
         "Mobile conversation cards for conference prep: lead-with angle, strategic signals, contacts, PCG/Emerald alignment, and discovery questions."
     )
+    doc.add_paragraph(f"Generated: {export_timestamp()}")
+    doc.add_paragraph(f"Data source: {data_source_label}")
 
-    for card in cards:
+    for idx, card in enumerate(cards):
         compact = card.get("compact", {})
         doc.add_heading(card["name"], level=1)
         doc.add_paragraph(
@@ -1506,6 +1659,14 @@ def build_docx(cards):
         for item in [compact.get("why"), compact.get("entry"), compact.get("barrier")]:
             if item:
                 doc.add_paragraph(item, style="List Bullet")
+
+        doc.add_heading("Why This District Scored This Way", level=2)
+        for item in card.get("score_explanation", []):
+            doc.add_paragraph(item, style="List Bullet")
+
+        doc.add_heading("Recommended Next Moves", level=2)
+        for item in card.get("next_moves", []):
+            doc.add_paragraph(item, style="List Bullet")
 
         for section_title, field_name in [
             ("Top Strategic Signals", "signals"),
@@ -1519,13 +1680,16 @@ def build_docx(cards):
             for item in card.get(field_name, []):
                 doc.add_paragraph(item, style="List Bullet")
 
+        if idx < len(cards) - 1:
+            doc.add_page_break()
+
     bio = BytesIO()
     doc.save(bio)
     bio.seek(0)
     return bio
 
 
-def build_matrix_docx(cards):
+def build_matrix_docx(cards, data_source_label="Built-in workbook"):
     doc = Document()
     section = doc.sections[0]
     section.left_margin = Inches(0.35)
@@ -1539,6 +1703,8 @@ def build_matrix_docx(cards):
 
     doc.add_paragraph("Scope: Currently filtered districts from the Strategic District Field Guide.")
     doc.add_paragraph("Designed for deeper review after quick conference scanning in the app.")
+    doc.add_paragraph(f"Generated: {export_timestamp()}")
+    doc.add_paragraph(f"Data source: {data_source_label}")
 
     table = doc.add_table(rows=1, cols=6)
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
@@ -1569,10 +1735,13 @@ def build_matrix_docx(cards):
         for cell in row_cells:
             cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
 
+        shade_cell(row_cells[0], "EFF6FF")
+
         contacts = card.get("contacts", [])[:5]
         row_cells[0].text = (
             f"{card.get('name','')}\n"
             f"{card.get('tier','')} | Overall {card.get('score','')}\n"
+            f"Strategic {card.get('strategic_score','')}\n"
             f"Enrollment: {card.get('enrollment','')}\n"
             f"Contacts: " + "; ".join(contacts)
         )
@@ -1588,7 +1757,10 @@ def build_matrix_docx(cards):
         )
 
         row_cells[2].text = ""
-        add_bullets(row_cells[2], compact.get("top_signals", []), limit=3)
+        add_bullets(
+            row_cells[2],
+            card.get("score_explanation", [])[:2] + compact.get("top_signals", [])[:2],
+        )
 
         row_cells[3].text = ""
         add_bullets(row_cells[3], compact.get("positioning", []), limit=3)
@@ -1597,7 +1769,8 @@ def build_matrix_docx(cards):
         add_bullets(row_cells[4], card.get("questions", []), limit=6)
 
         row_cells[5].text = ""
-        add_bullets(row_cells[5], compact.get("relationship", []), limit=3)
+        relationship_plus_moves = compact.get("relationship", [])[:2] + card.get("next_moves", [])[:2]
+        add_bullets(row_cells[5], relationship_plus_moves, limit=4)
 
     doc.add_heading("PCG / Emerald Alignment Lens", level=1)
 
@@ -1683,6 +1856,7 @@ def render_how_to(data_source_label):
       <li>Search the district name.</li>
       <li>Read Why It Matters, Best Entry Point, and Likely Barrier.</li>
       <li>Use the Quick Prep question to start discovery.</li>
+      <li>Review why the district scored highly and identify next moves.</li>
       <li>Review the top contacts and open the full contact list if needed.</li>
       <li>Use the full matrix download for deeper post-meeting planning.</li>
     </ol>
@@ -1728,7 +1902,9 @@ def render_opportunity_matrix(cards):
             "District": c.get("name", ""),
             "Tier": c.get("tier", ""),
             "Score": c.get("score", ""),
+            "Strategic Score": c.get("strategic_score", ""),
             "Why It Matters": c.get("compact", {}).get("why", ""),
+            "Why It Scored": "; ".join(c.get("score_explanation", [])[:2]),
             "Best Entry Point": c.get("compact", {}).get("entry", ""),
             "Best Question": (c.get("questions") or [""])[0],
             "Contacts": "; ".join(c.get("contacts", [])[:3]),
@@ -1875,7 +2051,7 @@ with tab_field:
     with col_dl1:
         st.download_button(
             "Download brief Word guide",
-            data=build_docx(filtered_cards),
+            data=build_docx(filtered_cards, data_source_label=data_source_label),
             file_name="Strategic_District_Field_Guide.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             disabled=not filtered_cards,
@@ -1884,7 +2060,7 @@ with tab_field:
     with col_dl2:
         st.download_button(
             "Download full matrix",
-            data=build_matrix_docx(filtered_cards),
+            data=build_matrix_docx(filtered_cards, data_source_label=data_source_label),
             file_name="Texas_District_Strategic_Positioning_Matrix.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             disabled=not filtered_cards,
@@ -1899,7 +2075,7 @@ with tab_field:
             selected_card = next(c for c in filtered_cards if c["name"] == selected_brief)
             st.download_button(
                 "Download selected brief",
-                data=build_docx([selected_card]),
+                data=build_docx([selected_card], data_source_label=data_source_label),
                 file_name=f"{selected_brief.replace(' ', '_')}_Brief.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 key="download_selected_brief",
@@ -1921,7 +2097,7 @@ with tab_matrix:
     render_opportunity_matrix(filtered_cards)
     st.download_button(
         "Download full matrix as Word document",
-        data=build_matrix_docx(filtered_cards),
+        data=build_matrix_docx(filtered_cards, data_source_label=data_source_label),
         file_name="Texas_District_Strategic_Positioning_Matrix.docx",
         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         disabled=not filtered_cards,
