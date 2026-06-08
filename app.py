@@ -1746,16 +1746,32 @@ def build_card(strategic_row, score_row, basic_lookup, contacts_lookup, leadersh
 
 def get_workbook_source(uploaded_file):
     if uploaded_file is not None:
-        return uploaded_file.getvalue(), "Uploaded workbook override", "bytes"
+        return (
+            uploaded_file.getvalue(),
+            "Uploaded workbook override",
+            "bytes",
+            datetime.now().timestamp(),
+        )
 
     if os.path.exists(BUILT_IN_WORKBOOK):
-        return BUILT_IN_WORKBOOK, "Built-in workbook", "path"
+        modified = os.path.getmtime(BUILT_IN_WORKBOOK)
 
-    return None, "No workbook found", "none"
+        return (
+            BUILT_IN_WORKBOOK,
+            f"Built-in workbook (Last modified: {datetime.fromtimestamp(modified)})",
+            "path",
+            modified,
+        )
+
+    return None, "No workbook found", "none", None
 
 
-@st.cache_data(show_spinner=False)
-def load_cards_from_workbook_cached(workbook_payload, source_type):
+@st.cache_data(ttl=60, show_spinner=False)
+def load_cards_from_workbook_cached(
+    workbook_payload,
+    source_type,
+    modified_time
+):
     if source_type == "bytes":
         xls = pd.ExcelFile(BytesIO(workbook_payload), engine="openpyxl")
     else:
@@ -2492,7 +2508,7 @@ with st.sidebar:
     uploaded_file = st.file_uploader("Optional: upload workbook override", type=["xlsx"])
     st.caption("If no workbook is uploaded, the app uses the built-in workbook from GitHub.")
 
-workbook_payload, data_source_label, source_type = get_workbook_source(uploaded_file)
+workbook_payload, data_source_label, source_type, modified_time = get_workbook_source(uploaded_file)
 
 if workbook_payload is None:
     tab_field, tab_hot, tab_compare, tab_howto, tab_matrix, tab_diag = st.tabs(
@@ -2523,7 +2539,11 @@ with st.spinner("Loading district intelligence..."):
         tsi_df,
         audit_df,
         score_cols,
-    ) = load_cards_from_workbook_cached(workbook_payload, source_type)
+    ) = load_cards_from_workbook_cached(
+    workbook_payload,
+    source_type,
+    modified_time
+)
 
 if not cards:
     tab_field, tab_hot, tab_compare, tab_howto, tab_matrix, tab_diag = st.tabs(
@@ -2559,6 +2579,12 @@ all_tags = sorted({tag for card in cards for tag in card.get("tags", [])})
 
 with st.sidebar:
     st.success(f"Using: {data_source_label}")
+    if os.path.exists(BUILT_IN_WORKBOOK):
+        mod_time = datetime.fromtimestamp(
+            os.path.getmtime(BUILT_IN_WORKBOOK)
+        )
+
+        st.caption(f"Workbook updated: {mod_time}")
 
     st.header("2. Search")
     query = st.text_input("Search", placeholder="District, contact, signal, offering, pain...")
